@@ -1,0 +1,4 @@
+name = "BrainMetastasis"
+uuid = "f9d62817-6943-4556-baa4-25f443b4403c"
+authors = ["Nikita Budnikov <budnikov_nikita@list.ru>"]
+version = "0.1.0"
