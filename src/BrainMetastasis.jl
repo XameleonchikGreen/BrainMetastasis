@@ -8,6 +8,7 @@ using Plots
 using MLJ
 using Logging
 using StatisticalMeasuresBase
+using Shapley, CategoricalDistributions
 
 Jaccard(cm) = truepositive(cm) / (truepositive(cm) + falsenegative(cm) + falsepositive(cm))
 Jaccard(ŷ, y) = truepositive(ŷ, y) / (truepositive(ŷ, y) + falsenegative(ŷ, y) + falsepositive(ŷ, y))
@@ -305,6 +306,23 @@ function bestModelsReport()
     df_valid = DataFrame(Models=model_names, balanced_acc=bac, jaccard_index=jac, F2=f2, FN=FN)
     return df_valid
 end  # function bestModelsReport
+
+function ShapleyResearch(models, Xvalid)
+    ϕ1 = shapley(Xvalid -> predict(models[4], Xvalid), Shapley.MonteCarlo(CPUThreads(), 1024), Xvalid)
+    bar_data = []
+    for i in ϕ1   
+        push!(bar_data, mean(abs.(pdf.(i, 1))))
+    end
+    n = size(bar_data, 1)
+    bar(bar_data,
+        yticks=(1:1:n, keys(ϕ1)),
+        orientation=:horizontal,
+        legend=false,
+        xlims=(0, 0.5),
+        title="Global feature importance",
+        xlabel="Mean(abs(Shapley value))",
+    )
+end  # function ShapleyResearch
 
 function metricTest()
     y = rand(Float64, 900)
