@@ -4,11 +4,12 @@ using DataFrames
 using Dates
 using CSV
 using Statistics
-using Plots
+using Plots, StatsPlots
 using MLJ
 using Logging
 using StatisticalMeasuresBase
 using Shapley, CategoricalDistributions
+import Imbalance
 
 Jaccard(cm) = truepositive(cm) / (truepositive(cm) + falsenegative(cm) + falsepositive(cm))
 Jaccard(ŷ, y) = truepositive(ŷ, y) / (truepositive(ŷ, y) + falsenegative(ŷ, y) + falsepositive(ŷ, y))
@@ -213,16 +214,35 @@ function CSVPretrain(s::String)
     CSV.write("pretrained.csv", df)
 end
 
-function TrainModelResearch()
+function DataPrepare(s::String; balancing="no")
+    df = CSV.read(s, DataFrame)
+    df = coerce(df, :Progression => OrderedFactor)
+    y, X = unpack(df, ==(:Progression), rng=1234)
+    if(balancing == "oversampling")
+        println("Before oversamppling")
+        Imbalance.checkbalance(y)
+        oversampler = (@load RandomOversampler pkg=Imbalance verbosity=0)()
+        mach = machine(oversampler)
+        X, y = MLJ.transform(mach, X, y)
+        println("After oversamppling")
+    elseif(balancing == "SMOTE")
+        println("Before SMOTE")
+        Imbalance.checkbalance(y)
+        oversampler = (@load SMOTE pkg=Imbalance verbosity=0)()
+        mach = machine(oversampler)
+        X, y = MLJ.transform(mach, X, y)
+        println("After SMOTE")
+    elseif(balancing == "no")
+        println("No balancing")
+    end
+    Imbalance.checkbalance(y)
+    (Xtrain, Xvalid), (ytrain, yvalid) = partition((X, y), 0.8, rng=123, multi=true, stratify=y)
+    return Xtrain, ytrain, Xvalid, yvalid
+end  # function DataPrepare
+
+function TrainModelResearch(Xtrain, ytrain)
 
     disable_logging(Logging.Warn)
-
-    df = CSV.read("pretrained.csv", DataFrame)
-    df = coerce(df, :Progression => OrderedFactor)
-
-    y, X = unpack(df, ==(:Progression), rng=1234)
-    (Xtrain, Xvalid), (ytrain, yvalid) = partition((X, y), 0.8, rng=123, multi=true, stratify=y)
-
     best_models = []
 
     knn = (@load KNNClassifier verbosity=0)()
@@ -279,11 +299,10 @@ function TrainModelResearch()
     fit!(mach, verbosity=0)
     push!(best_models, mach)
 
-    return best_models, Xvalid, yvalid
+    return best_models
 end
 
-function bestModelsReport()
-    best_models, Xvalid, yvalid = TrainModelResearch()
+function bestModelsReport(best_models, Xvalid, yvalid)
     model_names = []
     bac = []
     jac = []
@@ -307,21 +326,42 @@ function bestModelsReport()
     return df_valid
 end  # function bestModelsReport
 
-function ShapleyResearch(models, Xvalid)
-    ϕ1 = shapley(Xvalid -> predict(models[4], Xvalid), Shapley.MonteCarlo(CPUThreads(), 1024), Xvalid)
+function ShapleyResearch(models, Xvalid, i, pl_tit)
+    ϕ = shapley(Xvalid -> predict(models[i], Xvalid), Shapley.MonteCarlo(CPUThreads(), 1024), Xvalid)
     bar_data = []
-    for i in ϕ1   
+    k = [string(i) for i in keys(ϕ)]
+    for i in ϕ 
         push!(bar_data, mean(abs.(pdf.(i, 1))))
     end
     n = size(bar_data, 1)
-    bar(bar_data,
-        yticks=(1:1:n, keys(ϕ1)),
+    b = bar(
+        bar_data,
+        yticks=(1:1:n, k),
+        ylims=(0, n+1),
         orientation=:horizontal,
         legend=false,
-        xlims=(0, 0.5),
+        xlims=(0, 0.3),
         title="Global feature importance",
         xlabel="Mean(abs(Shapley value))",
     )
+    A = [pdf.(i, 1) for i in ϕ]
+    v = violin(
+        A, 
+        xticks=(1:1:n, k),
+        xlims=(0, n+1),
+        legend=false,
+        title="Local explanation summary",
+        ylabel="SHAP value", 
+        permute=(:y, :x),
+    )
+    plot(
+        b,
+        v,
+        layout=(1, 2),
+        plot_title=pl_tit,
+        size=(1200, 900),
+        margin=(20, :pt)
+        )
 end  # function ShapleyResearch
 
 function metricTest()
