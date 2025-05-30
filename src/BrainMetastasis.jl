@@ -219,12 +219,12 @@ function DataPrepare(s::String; balancing="no")
     df = coerce(df, :Progression => OrderedFactor)
     y, X = unpack(df, ==(:Progression), rng=1234)
     if(balancing == "oversampling")
-        println("Before oversamppling")
+        println("Before oversampling")
         Imbalance.checkbalance(y)
         oversampler = (@load RandomOversampler pkg=Imbalance verbosity=0)()
         mach = machine(oversampler)
         X, y = MLJ.transform(mach, X, y)
-        println("After oversamppling")
+        println("After oversampling")
     elseif(balancing == "SMOTE")
         println("Before SMOTE")
         Imbalance.checkbalance(y)
@@ -326,7 +326,7 @@ function bestModelsReport(best_models, Xvalid, yvalid)
     return df_valid
 end  # function bestModelsReport
 
-function ShapleyResearch(models, Xvalid, i, pl_tit)
+function ShapleyResearch(models, Xvalid, i, pl_tit, path)
     ϕ = shapley(Xvalid -> predict(models[i], Xvalid), Shapley.MonteCarlo(CPUThreads(), 1024), Xvalid)
     bar_data = []
     k = [string(i) for i in keys(ϕ)]
@@ -341,8 +341,11 @@ function ShapleyResearch(models, Xvalid, i, pl_tit)
         orientation=:horizontal,
         legend=false,
         xlims=(0, 0.3),
-        title="Global feature importance",
-        xlabel="Mean(abs(Shapley value))",
+        title="Глобальная важность признаков",
+        xlabel="Среднее модулей значений Шепли",
+        tickfontsize=16,
+        labelfontsize=18,
+        titlefontsize=20
     )
     A = [pdf.(i, 1) for i in ϕ]
     v = violin(
@@ -350,18 +353,53 @@ function ShapleyResearch(models, Xvalid, i, pl_tit)
         xticks=(1:1:n, k),
         xlims=(0, n+1),
         legend=false,
-        title="Local explanation summary",
-        ylabel="SHAP value", 
+        title="Локальная важность признаков",
+        ylabel="Значения Шепли", 
         permute=(:y, :x),
+        tickfontsize=16,
+        labelfontsize=18,
+        titlefontsize=20,
+        linewidth=0,
+        color=:green
     )
-    plot(
+    plots_ticks = reshape(collect(1:1:n), 1, n)
+    for i in 1:1:n
+        mx = maximum(Xvalid[!, i])
+        mn = minimum(Xvalid[!, i])
+        colors = [cgrad(:bwr)[(j-mn)/(mx-mn)] for j in Xvalid[!, i]]
+        dotplot!(
+            hcat(plots_ticks[i]),
+            A[i],
+            legend=false,
+            permute=(:y, :x),
+            mc=colors,
+            markerstrokewidth=0
+        )
+    end
+    cbrr_data = collect(range(0, 1, 100))
+    cbrr = heatmap(
+        [1], 
+        cbrr_data,
+        [cbrr_data;;],
+        yticks=(0:1:1, ["Низкий", "Высокий"]),
+        tickfontsize=16,
+        c=:bwr,
+        colorbar=false,
+        xaxis=false,
+        ymirror=true
+    )
+    l = @layout [a{0.475w} b{0.475w} c]
+    p = plot(
         b,
         v,
-        layout=(1, 2),
+        cbrr,
+        layout=l,
         plot_title=pl_tit,
-        size=(1200, 900),
-        margin=(20, :pt)
-        )
+        size=(1600, 900),
+        margin=(20, :pt),
+        plot_titlefontsize=24,
+    )
+    savefig(p, "images/$(path)")
 end  # function ShapleyResearch
 
 function metricTest()
@@ -385,6 +423,17 @@ function metricTest()
     cm
 end  # function metricTest 
 
-end # module BrainMetastasis
+function ShapleyValuesGenerate(s::String)
+    plt_titls = ["(несбалансированные)", "(повторное использование)", "(SMOTE)"]
+    file_names = ["(imbalanced)", "(oversampling)", "(SMOTE)"]
+    balances = ["no", "oversampling", "SMOTE"]
+    for i in 1:1:3
+        Xtrain, ytrain, Xvalid, yvalid = DataPrepare(s; balancing=balances[i])
+        models = TrainModelResearch(Xtrain, ytrain)
+        ShapleyResearch(models, Xvalid, 2, "Дерево решений $(plt_titls[i])", "Decision_Tree$(file_names[i]).png")
+        ShapleyResearch(models, Xvalid, 3, "Случайный лес $(plt_titls[i])", "Random_Forest$(file_names[i]).png")
+        ShapleyResearch(models, Xvalid, 4, "Метод опорных векторов $(plt_titls[i])", "SVC$(file_names[i]).png")
+    end
+end  # function ShapleyValuesGenerate
 
-using .BrainMetastasis
+end # module BrainMetastasis
